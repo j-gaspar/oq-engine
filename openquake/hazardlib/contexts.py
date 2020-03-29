@@ -36,6 +36,7 @@ from openquake.hazardlib.probability_map import ProbabilityMap
 from openquake.hazardlib.geo.surface import PlanarSurface
 
 bymag = operator.attrgetter('mag')
+bydist = operator.attrgetter('dist')
 I16 = numpy.int16
 F32 = numpy.float32
 KNOWN_DISTANCES = frozenset(
@@ -284,7 +285,7 @@ class ContextMaker(object):
         self.add_rup_params(rupture)
         return sites, dctx
 
-    def make_ctxs(self, ruptures, sites, grp_ids, filt):
+    def make_ctxs(self, ruptures, grp_ids, filt):
         """
         :returns:
             a list of triples (rctx, sctx, dctx) if filt is True,
@@ -293,7 +294,7 @@ class ContextMaker(object):
         ctxs = []
         for rup in ruptures:
             try:
-                sctx, dctx = self.make_contexts(sites, rup, filt)
+                sctx, dctx = self.make_contexts(rup.sites, rup, filt)
             except FarAwayRupture:
                 continue
             rup.grp_ids = grp_ids
@@ -376,26 +377,28 @@ class PmapMaker(object):
         if self.fewsites:  # do not filter, but collapse
             rup_parametric = not numpy.isnan(
                 [r.occurrence_rate for r in rups]).any()
-            if (self.rup_indep and rup_parametric and len(sites) == 1
+            if (self.rup_indep and rup_parametric
                     and self.pointsource_distance != {}):
                 rups = self.collapse_point_ruptures(rups, sites)
                 # print_finite_size(rups)
-            ctxs = self.cmaker.make_ctxs(rups, sites, grp_ids, filt=False)
+            ctxs = self.cmaker.make_ctxs(rups, grp_ids, filt=False)
             if self.rup_indep and rup_parametric and self.collapse_ctxs:
                 ctxs = self.collapse_the_ctxs(ctxs)
             self.numrups += len(ctxs)
+            # reduce the distances
             for rup, dctx in ctxs:
-                mask = (dctx.rrup <= self.maximum_distance(
-                    rup.tectonic_region_type, rup.mag))
-                r_sites = sites.filter(mask)
-                for name in self.REQUIRES_DISTANCES:
-                    setattr(dctx, name, getattr(dctx, name)[mask])
-                self.rupdata.add(rup, r_sites, dctx)
+                if len(rup.sites) > 1:
+                    mask = (dctx.rrup <= self.maximum_distance(
+                        rup.tectonic_region_type, rup.mag))
+                    rup.sites = rup.sites.filter(mask)
+                    for name in self.REQUIRES_DISTANCES:
+                        setattr(dctx, name, getattr(dctx, name)[mask])
+                self.rupdata.add(rup, rup.sites, dctx)
                 self.rupdata.data['grp_id'].append(grp_ids)
-                self.numsites += len(r_sites)
-                yield rup, r_sites, dctx
+                self.numsites += len(rup.sites)
+                yield rup, rup.sites, dctx
         else:  # many sites, do not collapse, but filter
-            ctxs = self.cmaker.make_ctxs(rups, sites, grp_ids, filt=True)
+            ctxs = self.cmaker.make_ctxs(rups, grp_ids, filt=True)
             self.numrups += len(ctxs)
             self.numsites += sum(len(ctx[1]) for ctx in ctxs)
             yield from ctxs
@@ -466,6 +469,8 @@ class PmapMaker(object):
             self.numrups = 0
             self.numsites = 0
             rups = self._ruptures(src)
+            for rup in rups:
+                rup.sites = sites
             with self.ctx_mon:
                 L, G = len(self.cmaker.imtls.array), len(self.cmaker.gsims)
                 pmap = {grp_id: ProbabilityMap(L, G) for grp_id in src.grp_ids}
@@ -506,20 +511,29 @@ class PmapMaker(object):
                 pointlike.append(rup)
             else:
                 output.append(rup)
+        r_sites = [sites.filtered([s]) for s in range(len(sites))]
         for mag, mrups in groupby(pointlike, bymag).items():
             if len(mrups) == 1:  # nothing to do
                 output.extend(mrups)
                 continue
             mdist = self.maximum_distance(self.trt, mag)
-            coll = []
-            for rup in mrups:  # called on a single site
-                rup.dist = get_distances(rup, sites, 'rrup').min()
-                if rup.dist <= mdist:
-                    coll.append(rup)
-            for rs in groupby_bin(
-                    coll, POINT_RUPTURE_BINS, operator.attrgetter('dist')):
-                # group together ruptures in the same distance bin
-                output.extend(_collapse(rs))
+            coll = AccumDict(accum=[], keys=sites.sids)
+            for rup in mrups:
+                dists = get_distances(rup, sites, 'rrup')
+                for i, dist in enumerate(dists):
+                    r = copy.copy(rup)
+                    if dist <= mdist:
+                        r.dist = dist
+                        coll[i].append(r)
+            for s in range(len(sites)):
+                for rs in groupby_bin(coll[s], POINT_RUPTURE_BINS, bydist):
+                    # group together ruptures in the same distance bin
+                    if len(rs) > 1:
+                        print('collapsing %d->1 for site %d' %
+                              (len(rs), sites.sids[s]))
+                    for rup in _collapse(rs):
+                        rup.sites = r_sites[s]
+                        output.append(rup)
         return output
 
     def collapse_the_ctxs(self, ctxs):
@@ -828,7 +842,7 @@ def ruptures_by_mag_dist(sources, srcfilter, gsims, params, monitor):
     for src, sites in srcfilter(sources):
         for rup in src.iter_ruptures(shift_hypo=cmaker.shift_hypo):
             try:
-                sctx, dctx = cmaker.make_contexts(sites, rup)
+                sctx, dctx = cmaker.make_contexts(rup, sites)
             except FarAwayRupture:
                 continue
             di = numpy.searchsorted(dist_bins, dctx.rrup[0])
