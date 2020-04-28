@@ -353,9 +353,15 @@ class ClassicalCalculator(base.HazardCalculator):
         src_groups = self.csm.src_groups
 
         def srcweight(src):
+            if oq.pointsource_distance is None and hasattr(
+                    src, 'nodal_plane_distribution'):
+                d = len(src.nodal_plane_distribution.data) * len(
+                    src.hypocenter_distribution.data)
+            else:
+                d = 1
             trt = src.tectonic_region_type
             g = len(gsims_by_trt[trt])
-            return src.weight * g
+            return src.weight * g * d
 
         logging.info('Weighting the sources')
         totweight = sum(sum(srcweight(src) for src in sg) for sg in src_groups)
