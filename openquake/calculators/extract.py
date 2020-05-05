@@ -19,6 +19,7 @@ from urllib.parse import parse_qs
 from functools import lru_cache, partial
 import collections
 import logging
+import json
 import gzip
 import ast
 import io
@@ -1164,6 +1165,16 @@ def extract_disagg(dstore, what):
     return ArrayWrapper(values, qdict)
 
 
+def todict(hdf5_group):
+    dic = {}
+    for k, v in hdf5_group.items():
+        if hasattr(v, 'items'):  # subgroup
+            dic[k] = todict(v)
+        else:
+            dic[k] = list(v[()])
+    return dic
+
+
 @extract.add('disagg_layer')
 def extract_disagg_layer(dstore, what):
     """
@@ -1180,7 +1191,8 @@ def extract_disagg_layer(dstore, what):
     rlz = 0 if len(dstore['weights']) == 1 else None
     grp = disagg_output(dstore, imt, 0, poe_id, rlz)
     dset = grp[label]
-    edges = {k: grp.attrs[k] for k in grp.attrs if k.endswith('_edges')}
+    edges = todict(dstore['disagg-bins'])
+    edges['trts'] = list(dstore.getitem('full_lt').attrs['trts'])
     dt = [('site_id', U32), ('lon', F32), ('lat', F32), ('rlz_id', U16),
           ('poes', (dset.dtype, dset.shape))]
     sitecol = dstore['sitecol']
@@ -1193,7 +1205,7 @@ def extract_disagg_layer(dstore, what):
         rec['lat'] = lat
         rec['rlz_id'] = 0 if grp.attrs['rlzi'] == 'mean' else grp.attrs['rlzi']
         rec['poes'] = grp[label][()]
-    return ArrayWrapper(out, edges)
+    return ArrayWrapper(out, {'json': json.dumps(edges)})
 
 # ######################### extracting ruptures ##############################
 
