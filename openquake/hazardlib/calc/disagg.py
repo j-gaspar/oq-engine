@@ -123,24 +123,24 @@ def _disaggregate(cmaker, sitecol, ctxs, iml1, eps3,
                     pnes=numpy.zeros((U, P, E)))
     if U == 0:
         return bdata
-    for u, (rctx, dctx) in enumerate(ctxs):
-        [dist] = dctx.rrup
+    for u, ctx in enumerate(ctxs):
+        [dist] = ctx.rrup
         if gsim.minimum_distance and dist < gsim.minimum_distance:
             dist = gsim.minimum_distance
-        bdata.mags[u] = rctx.mag
-        bdata.lons[u] = dctx.lon
-        bdata.lats[u] = dctx.lat
+        bdata.mags[u] = ctx.mag
+        bdata.lons[u] = ctx.lon
+        bdata.lats[u] = ctx.lat
         bdata.dists[u] = dist
         with gmf_mon:
             mean_std = get_mean_std(
-                sitecol, rctx, dctx, [iml1.imt], [gsim])[..., 0, 0]  # (2, 1)
+                sitecol, ctx, ctx, [iml1.imt], [gsim])[..., 0, 0]  # (2, 1)
         with pne_mon:
             imls = to_distribution_values(iml1, iml1.imt)  # shape P
             poes = numpy.zeros((P, E))
             for p, iml in enumerate(imls):
                 [lvl] = (iml - mean_std[0]) / mean_std[1]
                 poes[p] = _disagg_eps(mean_std, lvl, *eps3)
-            bdata.pnes[u] = rctx.get_probability_no_exceedance(poes)
+            bdata.pnes[u] = ctx.get_probability_no_exceedance(poes)
     return bdata
 
 

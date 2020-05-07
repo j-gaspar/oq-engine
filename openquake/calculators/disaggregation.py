@@ -30,7 +30,7 @@ from openquake.baselib.python3compat import encode
 from openquake.hazardlib import stats
 from openquake.hazardlib.calc import disagg
 from openquake.hazardlib.imt import from_string
-from openquake.hazardlib.gsim.base import ContextMaker, DistancesContext
+from openquake.hazardlib.gsim.base import ContextMaker
 from openquake.hazardlib.contexts import RuptureContext
 from openquake.hazardlib.tom import PoissonTOM
 from openquake.commonlib import util
@@ -129,12 +129,13 @@ def compute_disagg(dstore, idxs, cmaker, iml3, trti, bin_edges, monitor):
         ctxs = []
         ok, = numpy.where(
             rupdata['rrup_'][:, sid] <= cmaker.maximum_distance(cmaker.trt))
+        acc = AccumDict(accum=[])  # parname -> list of values
         for ridx in ok:  # consider only the ruptures close to the site
-            rctx = RuptureContext((par, rupdata[par][ridx])
-                                  for par in rupdata if not par.endswith('_'))
-            dctx = DistancesContext((par[:-1], rupdata[par][ridx, [sid]])
-                                    for par in rupdata if par.endswith('_'))
-            ctxs.append((rctx, dctx))
+            rparams = [(par, rupdata[par][ridx])
+                       for par in rupdata if not par.endswith('_')]
+            dparams = [(par[:-1], rupdata[par][ridx, [sid]])
+                       for par in rupdata if par.endswith('_')]
+            ctxs.append(RuptureContext(rparams + dparams))
         matrix = disagg.build_matrix(
             cmaker, singlesite, ctxs, iml3.imt, iml2, rlzs,
             oq.num_epsilon_bins, bins, pne_mon, mat_mon, gmf_mon)

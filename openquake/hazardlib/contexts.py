@@ -204,15 +204,18 @@ class ContextMaker(object):
 
     def from_srcs(self, srcs, sites):  # used in disagg.disaggregation
         """
-        :returns: a list of pairs (rctx, dctx)
+        :returns: a list of contexts
         """
         grp_ids = [0]
         ctxs = []
         for src in srcs:
             rups = list(src.iter_ruptures(shift_hypo=self.shift_hypo))
-            for rup in rups:
-                self.add_rup_params(rup)  # make the rupture context-like
-            ctxs.extend(self.make_ctxs(rups, sites, grp_ids, False))
+            for rup, dctx in self.make_ctxs(rups, sites, grp_ids, False):
+                ctx = self.add_rup_params(rup)
+                ctx.occurrence_rate = rup.occurrence_rate
+                for k, v in vars(dctx).items():
+                    setattr(ctx, k, v)
+                ctxs.append(ctx)
         return ctxs
 
     def filter(self, sites, rup):
@@ -252,6 +255,7 @@ class ContextMaker(object):
         """
         Add .REQUIRES_RUPTURE_PARAMETERS to the rupture
         """
+        ctx = RuptureContext()
         for param in self.REQUIRES_RUPTURE_PARAMETERS:
             if param == 'mag':
                 value = rupture.mag
@@ -274,7 +278,8 @@ class ContextMaker(object):
             else:
                 raise ValueError('%s requires unknown rupture parameter %r' %
                                  (type(self).__name__, param))
-            setattr(rupture, param, value)
+            setattr(ctx, param, value)
+        return ctx
 
     def make_contexts(self, sites, rupture, filt=True):
         """
@@ -708,12 +713,13 @@ class DistancesContext(BaseContext):
             return self
         ctx = DistancesContext()
         for dist, array in vars(self).items():
-            small_distances = array < minimum_distance
-            if small_distances.any():
-                array = numpy.array(array)  # make a copy first
-                array[small_distances] = minimum_distance
-                array.flags.writeable = False
-            setattr(ctx, dist, array)
+            if dist in KNOWN_DISTANCES:
+                small_distances = array < minimum_distance
+                if small_distances.any():
+                    array = numpy.array(array)  # make a copy first
+                    array[small_distances] = minimum_distance
+                    array.flags.writeable = False
+                setattr(ctx, dist, array)
         return ctx
 
 
@@ -734,6 +740,7 @@ class RuptureContext(BaseContext):
         'mag', 'strike', 'dip', 'rake', 'ztor', 'hypo_lon', 'hypo_lat',
         'hypo_depth', 'width', 'hypo_loc')
     temporal_occurrence_model = None  # to be set
+    roundup = DistancesContext.roundup
 
     def __init__(self, param_pairs=()):
         for param, value in param_pairs:
